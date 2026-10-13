@@ -17,6 +17,7 @@ Build, run and debug SAP Business One add-ons (C# and VB.NET, .NET Framework) fr
 - **Client helper.** Detects whether the SAP Business One client is installed, 64-bit and running, and can start it for you.
 - **New add-on project** command that scaffolds an SDK-style project, a menu example and a `launch.json`.
 - **Forms.** Edit SAP Business One form files (`.b1f`, `.srf`) with a visual designer, a forms tree, a live preview in the SAP client and `.b1s` generation (see [Forms](#forms)).
+- **Add-on package.** **SAP B1: Package add-on** builds the add-on and writes the zip that the Extension Manager imports, without the SAP SDK tools (see [Add-on package](#add-on-package)).
 - Italian and English user interface.
 
 ## Requirements
@@ -140,7 +141,15 @@ Errors reported by the client are shown as diagnostics on the file. With `sapb1.
 - **Capture form from SAP Business One client** reads a form that is open in the client and saves it as a new UserForm (`.b1f`), as a `.srf`, or as a new SystemForm. A new UserForm does not keep the uid of the captured window, its business object (`ObjectType`), data browser and mode: the final message lists what was reset.
 - **New form** creates the `.b1f`, the code-behind class and the `.csproj` entries (old-style and SDK-style projects, with targeted edits that keep encoding and formatting) for a **UserForm**, a **SystemForm** or a **UDOForm**. The SystemForm wizard starts from a form open in the client (or opens a system form from a menu you choose) and keeps its complete XML as `<Name>.b1f__orig_srf`. The UDO wizard lists the UDOs of the company and starts from the default form of the one you choose.
 - **Capture original** (SystemForm) replaces the `__orig_srf` of an existing SystemForm with the current form of the client. The `.b1s` carries the difference between the `.b1f` and this original.
-- **Save UDO form to DB** writes the form of a UDOForm in the `FormSRF` field of its UDO. This is the only write to the database that the extension makes. Before writing, a confirmation names the company and the database the client is connected to and the UDO that will be changed; nothing is written if you cancel.
+- **Save UDO form to DB** writes the form of a UDOForm in the `FormSRF` field of its UDO. This and the Service Layer variant (see [UDO forms from a company](#udo-forms-from-a-company)) are the only writes to the database that the extension makes. Before writing, a confirmation names the company and the database the client is connected to and the UDO that will be changed; nothing is written if you cancel.
+
+### UDO forms from a company
+
+You can bring the form of a UDO into a workspace folder, edit it in the designer and save it back, with the SAP Business One client or, without it, through the Service Layer.
+
+- **Connections.** *SAP B1: Add Service Layer connection* asks for the URL (`https://server:50000/b1s/v1`, or just `server:50000`), the company database, the user and the password; *Remove Service Layer connection* deletes a connection. Connections are listed in the `sapb1.serviceLayer.connections` setting (user scope); the password is never written there, it is kept in VS Code's secret storage. If the server certificate is not trusted by the system, the extension shows it with its SHA-256 fingerprint and trusts it only after you accept. A certificate you trust is pinned: B1 DevKit connects to that server only while it presents exactly that certificate. If the server presents another one later, nothing is sent and an error offers **Trust the new certificate**, which shows the new certificate and pins it for the next connection if you trust it.
+- **Import UDO forms…** lists the UDOs of the company (from a connection or from the company open in the client) and creates a `.b1f` for each one you choose, in any folder of the workspace or in an add-on. The form is the one stored in the UDO; if the UDO has none, it is the default form of the client or a form generated from the metadata of the UDO (tables, fields, valid values).
+- **Save UDO form to DB** writes the form back to its UDO. It saves through the origin recorded at import or at the last save (`.b1devkit/udo-forms.json`: the client or the connection, the company, the UDO) without asking; a file without an origin asks where to save it. If the target differs from the origin (another company database, client or connection, or UDO), you are warned first and the form is saved there only if you confirm. It asks for confirmation naming company and database, and re-reads the stored form after the confirmation: nothing is saved if it changed in the meantime. If the form in the database changed since the import, you are warned and can choose **Overwrite** or **Compare**. The version being replaced is saved first under `.b1devkit/udo-forms/backups`. Renaming or moving a `.b1f` in VS Code keeps its origin; renamed or moved outside VS Code, the file loses it and the next save asks where to save it.
 
 ### `.b1s` generation
 
@@ -154,6 +163,7 @@ After each successful build done by B1 DevKit (build, rebuild, F5, `sapb1` tasks
 | `sapb1.forms.previewOnSave` | `true` | Reload the live preview when the file is saved and 500 ms after each change in the designer. |
 | `sapb1.forms.designer.snap` | `5` | Grid of the designer in pixels (0 to 50). `0` turns snapping off. |
 | `sapb1.forms.designer.guides` | `true` | Alignment guides while dragging and resizing with the mouse (hold Alt to place freely). |
+| `sapb1.serviceLayer.connections` | `[]` | Connections to the Service Layer: `name`, `url`, `companyDb`, `user`. Passwords are never stored here. |
 
 ### Limits
 
@@ -163,6 +173,36 @@ After each successful build done by B1 DevKit (build, rebuild, F5, `sapb1` tasks
 - The fidelity of the designer is approximate, not pixel-perfect: check the result with the live preview.
 - The live preview, the capture and the wizards need the 64-bit SAP Business One client, running and logged in to a company. With a 32-bit client they are disabled, with a message.
 - A command-line MSBuild target that generates the `.b1s` is not available: the file is written by the extension after its own builds.
+
+## Add-on package
+
+**SAP B1: Package add-on** (`sapb1.package`) turns the active add-on into the zip that the SAP Business One Extension Manager imports (lightweight installation). It is written by B1 DevKit itself: the SAP packaging tools are not needed.
+
+What the command does:
+
+1. Takes the `.ard` registration file of the project (a `.ard` in the project folder or its subfolders, skipping `bin`, `obj`, `node_modules`, `packages` and `.git`). With several, it always asks which one to use, the last one used first. With none, a wizard asks the extension name, partner, partner namespace, contact and minimum SAP Business One version, and writes `<ExtName>.ard` next to the project (an existing file is never overwritten). If the `.ard` has errors (those the editor reports, or no `Addons/Addon` element), the command opens it and stops before building.
+2. Builds the add-on in the configuration `sapb1.package.configuration` (`Release` by default). For each platform in `sapb1.package.platforms` the build output must run with that bitness: `x64` needs `PlatformTarget` x64, or AnyCPU without Prefer32Bit; `x86` needs x86, or AnyCPU with Prefer32Bit. A platform that the main build does not fit is built on its own, and the command stops if that would overwrite the output of another platform or if the bitness still does not fit.
+3. If the project has forms (UserForm or SystemForm), requires the `<AssemblyName>.b1s` next to the executable, newer than the executable and containing every form. A missing, stale or incomplete `.b1s` is regenerated, unless `sapb1.forms.generateB1s` is `never`, or `auto` and the project has its own `.b1s` generator (then the message asks you to rebuild); if forms are still missing, the package is not created and the message lists them.
+4. Reads the version from the executable (its `FileVersion`, as it is written); if the platforms have different versions, it stops.
+5. Collects the whole output folder, minus the exclusions, and shows a preview: name, version, number of files, platforms, size and destination. **Show files** lists them in a read-only document.
+6. Writes `<ExtName>_v<version>.zip` in `sapb1.package.outputFolder` (a temporary file, then renamed). An existing zip is replaced only after you confirm.
+
+The zip contains the completed `.ard` (version, add-on name, executable name, MD5 and SHA-256 signatures of the executable, and the list of files) and the files under `X64Client` and/or `X86Client`.
+
+### Editing the `.ard`
+
+`*.ard` files open with the `sapb1-ard` language: XML with diagnostics (invalid XML, root other than `AddOnRegData`, `SchemaVersion` other than `3.0`, empty `ExtName`, `Partner` or `Partnernmsp`, values outside the allowed lists) and completion of the values of `SlientInstallation`, `SlientUpgrade`, `MultipleVersion` and `DBType`. The `.ard` of the project is never modified by the command; only the copy inside the zip is completed.
+
+### Settings
+
+| Setting | Default | Description |
+|---|---|---|
+| `sapb1.package.platforms` | `["x64"]` | Platforms of the package: `x64` (folder `X64Client`) and/or `x86` (folder `X86Client`). |
+| `sapb1.package.configuration` | `Release` | Build configuration of the add-on in the package. |
+| `sapb1.package.exclude` | `logs/**`, `app.publish/**`, `**/*.vshost.*`, `**/*.zip`, `**/*.log`, `**/*.ard` | Files of the output folder left out of the package (globs relative to it; `\` and `/` are both separators; an invalid pattern stops the command before building). The executable is always included, and so is its `.b1s` when the project has UserForms or SystemForms. |
+| `sapb1.package.outputFolder` | `""` | Folder of the zip, relative to the project folder or absolute. Empty means `bin\AddonPackages`. |
+
+The final check is the import of the zip in the Extension Manager of a test company: B1 DevKit builds the package in the observed format, but only the Extension Manager can confirm that it accepts it. Classic installer packages, digital signing and per-file actions are not covered.
 
 ## Launch configuration reference
 
@@ -217,6 +257,11 @@ Any other property is passed unchanged to the .NET Framework debugger, so its op
 | `sapb1.forms.previewOnSave` | `true` | Reload the live preview on save (see [Forms](#forms)). |
 | `sapb1.forms.designer.snap` | `5` | Grid of the form designer in pixels (see [Forms](#forms)). |
 | `sapb1.forms.designer.guides` | `true` | Alignment guides in the form designer (see [Forms](#forms)). |
+| `sapb1.serviceLayer.connections` | `[]` | Service Layer connections (`name`, `url`, `companyDb`, `user`); passwords are kept in the secret storage (see [UDO forms from a company](#udo-forms-from-a-company)). |
+| `sapb1.package.platforms` | `["x64"]` | Platforms of the Extension Manager package (see [Add-on package](#add-on-package)). |
+| `sapb1.package.configuration` | `Release` | Build configuration of the package. |
+| `sapb1.package.exclude` | see above | Files of the output folder left out of the package. |
+| `sapb1.package.outputFolder` | `""` | Folder of the package zip (`bin\AddonPackages` when empty). |
 
 ## How building works
 
@@ -252,4 +297,4 @@ Variables are substituted, and relative `project` and `solution` paths start fro
 
 ## License
 
-MIT (see the LICENSE file included in the extension). Copyright (c) 2026 Adriano D'Addiego.
+MIT (see the LICENSE file included in the extension). Copyright (c) 2026 ADeploy.
